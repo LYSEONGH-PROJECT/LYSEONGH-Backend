@@ -26,11 +26,10 @@ model ContactMessage {
   id        String   @id @default(cuid())
   name      String
   email     String
-  phone     String?  // Optional
+  phone     String?
   message   String
   createdAt DateTime @default(now())
-
-  @@index([email]) // Moved index to block level
+  @@index([email])
 }
 
 model Invoice {
@@ -45,4 +44,9 @@ model Invoice {
   adminSignature String
   pdfUrl         String
   createdAt      DateTime @default(now())
+}
+
+model InvoiceCounter {
+  id         Int  @id
+  lastNumber Int
 }
