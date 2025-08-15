@@ -1,4 +1,3 @@
-// prisma/schema.prisma
 generator client {
   provider = "prisma-client-js"
 }
@@ -31,5 +30,19 @@ model ContactMessage {
   message   String
   createdAt DateTime @default(now())
 
-  @@index([email]) //  Moved index to block level
+  @@index([email]) // Moved index to block level
+}
+
+model Invoice {
+  id             String   @id @default(cuid())
+  invoiceNumber  String   @unique
+  clientName     String
+  clientEmail    String
+  items          Json
+  subtotal       Float
+  totalAmount    Float
+  dateIssued     DateTime @default(now())
+  adminSignature String
+  pdfUrl         String
+  createdAt      DateTime @default(now())
 }
