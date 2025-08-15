@@ -1,13 +1,13 @@
-// src/middleware/authMiddleware.ts
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import { UserRole } from '../utils/roles';
 
 interface DecodedToken {
   id: string;
   email: string;
-  role: string;
-  iat: number;
-  exp: number;
+  role: UserRole;
+  iat?: number;
+  exp?: number;
 }
 
 export const authenticateToken = (
@@ -24,8 +24,21 @@ export const authenticateToken = (
   const token = authHeader.split(' ')[1];
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as DecodedToken;
-    req.user = decoded; // Includes role
+    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as Omit<
+      DecodedToken,
+      'role'
+    > & { role: string };
+
+    //  Ensure the role matches our allowed UserRole values
+    if (!['ADMIN', 'TECHNICIAN', 'VIEWER'].includes(decoded.role)) {
+      return res.status(403).json({ message: 'Invalid role in token' });
+    }
+
+    req.user = {
+      ...decoded,
+      role: decoded.role as UserRole,
+    };
+
     next();
   } catch (err) {
     console.error('Token verification error:', err);

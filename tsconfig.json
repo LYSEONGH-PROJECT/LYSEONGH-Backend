@@ -2,13 +2,15 @@
   "compilerOptions": {
     "target": "es2016",
     "module": "commonjs",
-    "rootDir": ".",              
-    "outDir": "./dist",          
+    "rootDir": ".",
+    "outDir": "./dist",
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "strict": true,
     "skipLibCheck": true,
-    "typeRoots": ["./node_modules/@types", "./src/types"]
+    "typeRoots": ["./node_modules/@types"],
+    "baseUrl": "."
   },
-  "exclude": ["node_modules", "prisma"]  
+  "include": ["src/**/*.ts", "src/**/*.d.ts"],
+  "exclude": ["node_modules", "prisma"]
 }
