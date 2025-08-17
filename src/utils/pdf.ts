@@ -15,25 +15,21 @@ export type PdfData = {
   company: {
     name: string;
     address: string;
+    email?: string;
     logoPath?: string;
   };
 };
 
-export async function generateInvoicePdf(data: PdfData, outputDir = "invoices"): Promise<string> {
+// Generate invoice PDF
+export async function generateInvoicePdf(
+  data: PdfData,
+  outputDir = "invoices"
+): Promise<string> {
   if (!data.invoiceNumber || !data.clientName || !data.clientEmail || !data.adminSignature) {
     throw new Error("Missing required invoice fields");
   }
   if (!data.items || data.items.length === 0) {
     throw new Error("Items array cannot be empty");
-  }
-  if (typeof data.subtotal !== "number" || data.subtotal < 0 || isNaN(data.subtotal)) {
-    throw new Error("Invalid subtotal: must be a non-negative number");
-  }
-  if (typeof data.total !== "number" || data.total < 0 || isNaN(data.total)) {
-    throw new Error("Invalid total: must be a non-negative number");
-  }
-  if (!data.company.name || !data.company.address) {
-    throw new Error("Missing company name or address");
   }
 
   const fullOutputDir = path.join(__dirname, "../../", outputDir);
@@ -41,29 +37,32 @@ export async function generateInvoicePdf(data: PdfData, outputDir = "invoices"):
 
   const filename = `${data.invoiceNumber}.pdf`;
   const filePath = path.join(fullOutputDir, filename);
-  const pdfUrl = `/${outputDir}/${filename}`;
+  const pdfUrl = `/${outputDir}/${filename}`; // what the controller saves in db
 
   const doc = new PDFDocument({ size: "A4", margin: 50 });
   const stream = fs.createWriteStream(filePath);
   doc.pipe(stream);
 
+  // --- Company Header ---
   if (data.company.logoPath && fs.existsSync(path.join(__dirname, "../../", data.company.logoPath))) {
     doc.image(path.join(__dirname, "../../", data.company.logoPath), 50, 45, { width: 80 });
   }
   doc.fontSize(20).text(data.company.name, 140, 50);
   doc.fontSize(10).text(data.company.address, 140, 75);
+  if (data.company.email) doc.text(data.company.email, 140, 90);
   doc.fontSize(20).text("INVOICE", 400, 50, { align: "right" });
-  doc.moveDown();
 
+  doc.moveDown();
   doc.fontSize(12).text(`Invoice Number: ${data.invoiceNumber}`, 50, 120);
   doc.text(`Date Issued: ${data.dateIssued.toDateString()}`, 50, 135);
-  doc.moveDown();
 
+  // --- Bill To ---
+  doc.moveDown();
   doc.fontSize(12).text("Bill To:", 50, 170);
   doc.text(data.clientName, 50, 185);
   doc.text(data.clientEmail, 50, 200);
-  doc.moveDown();
 
+  // --- Items Table ---
   const tableTop = 240;
   const itemX = 50;
   const qtyX = 300;
@@ -86,11 +85,13 @@ export async function generateInvoicePdf(data: PdfData, outputDir = "invoices"):
     y += 20;
   });
 
+  // --- Totals ---
   y += 20;
   doc.text(`Subtotal: GHS ${data.subtotal.toFixed(2)}`, 400, y, { align: "right" });
   y += 20;
   doc.fontSize(13).text(`Total: GHS ${data.total.toFixed(2)}`, 400, y, { align: "right" });
 
+  // --- Signature ---
   y += 50;
   doc.rect(50, y, 200, 0).stroke();
   doc.text("Authorized Signature", 50, y + 5);
