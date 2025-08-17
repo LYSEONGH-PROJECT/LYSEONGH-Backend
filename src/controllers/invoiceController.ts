@@ -1,121 +1,112 @@
-// src/controllers/invoiceController.ts
-import { Request, Response } from "express";
-import { PrismaClient } from "@prisma/client";
-import path from "path";
 import fs from "fs";
-import sanitizeHtml from "sanitize-html";
+import path from "path";
+import PDFDocument from "pdfkit";
+// Update the import path to the correct location of InvoiceItem
+import { InvoiceItem } from "../utils/calculateTotals";
 
-import { generateInvoicePdf } from "../utils/pdf";
-import { sendInvoiceEmail, buildTransport } from "../utils/mailer";
-import { calculateTotals } from "../utils/calculateTotals";
-import { generateInvoiceNumber } from "../utils/invoiceNumber";
-
-const prisma = new PrismaClient();
-const transporter = buildTransport();
-
-export const createInvoice = async (req: Request, res: Response) => {
-  try {
-    const { clientName, clientEmail, items, adminSignature } = req.body;
-
-    // --- Environment Validation ---
-    if (!process.env.ADMIN_EMAIL) {
-      return res.status(500).json({ success: false, error: "Server misconfiguration: ADMIN_EMAIL missing" });
-    }
-
-    // --- Input Validation ---
-    if (!clientName || typeof clientName !== "string") {
-      return res.status(400).json({ success: false, error: "Client name is required" });
-    }
-    if (!clientEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail)) {
-      return res.status(400).json({ success: false, error: "Valid client email is required" });
-    }
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ success: false, error: "Items must be a non-empty array" });
-    }
-    for (const [index, item] of items.entries()) {
-      if (!item.name || typeof item.name !== "string") {
-        return res.status(400).json({ success: false, error: `Item ${index + 1} is missing a valid name` });
-      }
-      if (typeof item.quantity !== "number" || item.quantity <= 0) {
-        return res.status(400).json({ success: false, error: `Item ${index + 1} has invalid quantity` });
-      }
-      if (typeof item.price !== "number" || item.price < 0) {
-        return res.status(400).json({ success: false, error: `Item ${index + 1} has invalid price` });
-      }
-    }
-    if (!adminSignature || typeof adminSignature !== "string") {
-      return res.status(400).json({ success: false, error: "Admin signature is required" });
-    }
-
-    // --- Sanitize Inputs ---
-    const safeClientName = sanitizeHtml(clientName);
-    const safeSignature = sanitizeHtml(adminSignature);
-    const safeItems = items.map((i: any) => ({
-      name: sanitizeHtml(i.name),
-      quantity: i.quantity,
-      price: i.price,
-    }));
-
-    // --- Generate Invoice Number & Totals ---
-    const invoiceNumber = await generateInvoiceNumber(prisma);
-    const totals = calculateTotals(safeItems);
-
-    // --- File Path Setup ---
-    const pdfDir = path.join(__dirname, "../../invoices");
-    if (!fs.existsSync(pdfDir)) fs.mkdirSync(pdfDir, { recursive: true });
-    const pdfPath = path.join(pdfDir, `${invoiceNumber}.pdf`);
-
-    // --- Generate PDF ---
-    await generateInvoicePdf({
-      invoiceNumber,
-      clientName: safeClientName,
-      clientEmail,
-      items: safeItems,
-      totalAmount: totals.total,
-      adminSignature: safeSignature,
-      pdfPath,
-      companyDetails: {
-        name: "LYSEONGH",
-        address: "Accra, Ghana",
-        email: "info@lyseongh.com",
-      },
-    });
-
-    if (!fs.existsSync(pdfPath)) {
-      return res.status(500).json({ success: false, error: "Failed to generate PDF" });
-    }
-
-    // --- Save to Database ---
-    const invoice = await prisma.invoice.create({
-      data: {
-        invoiceNumber,
-        clientName: safeClientName,
-        clientEmail,
-        items: JSON.stringify(safeItems),
-        totalAmount: totals.total,
-        subtotal: totals.subtotal, // Add subtotal from calculateTotals
-        adminSignature: safeSignature,
-        pdfUrl: `/invoices/${invoiceNumber}.pdf`, // Add pdfUrl
-      },
-    });
-
-    // --- Send Email ---
-    const emailSent = await sendInvoiceEmail(transporter, {
-      toClient: clientEmail,
-      toAdmin: process.env.ADMIN_EMAIL,
-      invoiceNumber,
-      totalAmount: totals.total,
-      pdfPath,
-    });
-
-    return res.status(201).json({
-      success: true,
-      invoiceNumber,
-      pdfUrl: `/invoices/${invoiceNumber}.pdf`,
-      emailSent,
-    });
-  } catch (error) {
-    console.error("Error creating invoice:", error);
-    return res.status(500).json({ success: false, error: "Unexpected server error" });
-  }
+export type PdfData = {
+  invoiceNumber: string;
+  dateIssued: Date;
+  clientName: string;
+  clientEmail: string;
+  items: InvoiceItem[];
+  subtotal: number;
+  total: number;
+  // totalAmount: number; // Uncomment if you want to use totalAmount
+  adminSignature: string;
+  company: {
+    name: string;
+    address: string;
+    email?: string;
+    logoPath?: string;
+  };
 };
+
+// Generate invoice PDF
+export async function generateInvoicePdf(
+  data: PdfData,
+  outputDir = "invoices"
+): Promise<string> {
+  if (!data.invoiceNumber || !data.clientName || !data.clientEmail || !data.adminSignature) {
+    throw new Error("Missing required invoice fields");
+  }
+  if (!data.items || data.items.length === 0) {
+    throw new Error("Items array cannot be empty");
+  }
+
+  const fullOutputDir = path.join(__dirname, "../../", outputDir);
+  if (!fs.existsSync(fullOutputDir)) fs.mkdirSync(fullOutputDir, { recursive: true });
+
+  const filename = `${data.invoiceNumber}.pdf`;
+  const filePath = path.join(fullOutputDir, filename);
+  const pdfUrl = `/${outputDir}/${filename}`; // what the controller saves in db
+
+  const doc = new PDFDocument({ size: "A4", margin: 50 });
+  const stream = fs.createWriteStream(filePath);
+  doc.pipe(stream);
+
+  // --- Company Header ---
+  if (data.company.logoPath && fs.existsSync(path.join(__dirname, "../../", data.company.logoPath))) {
+    doc.image(path.join(__dirname, "../../", data.company.logoPath), 50, 45, { width: 80 });
+  }
+  doc.fontSize(20).text(data.company.name, 140, 50);
+  doc.fontSize(10).text(data.company.address, 140, 75);
+  if (data.company.email) doc.text(data.company.email, 140, 90);
+  doc.fontSize(20).text("INVOICE", 400, 50, { align: "right" });
+
+  doc.moveDown();
+  doc.fontSize(12).text(`Invoice Number: ${data.invoiceNumber}`, 50, 120);
+  doc.text(`Date Issued: ${data.dateIssued.toDateString()}`, 50, 135);
+
+  // --- Bill To ---
+  doc.moveDown();
+  doc.fontSize(12).text("Bill To:", 50, 170);
+  doc.text(data.clientName, 50, 185);
+  doc.text(data.clientEmail, 50, 200);
+
+  // --- Items Table ---
+  const tableTop = 240;
+  const itemX = 50;
+  const qtyX = 300;
+  const priceX = 360;
+  const subtotalX = 450;
+
+  doc.rect(itemX, tableTop, 500, 20).stroke();
+  doc.text("Item", itemX + 10, tableTop + 5);
+  doc.text("Qty", qtyX + 10, tableTop + 5);
+  doc.text("Price (GHS)", priceX + 10, tableTop + 5);
+  doc.text("Subtotal (GHS)", subtotalX + 10, tableTop + 5);
+
+  let y = tableTop + 20;
+  data.items.forEach((it) => {
+    doc.rect(itemX, y, 500, 20).stroke();
+    doc.text(it.name, itemX + 10, y + 5);
+    doc.text(String(it.quantity), qtyX + 10, y + 5);
+    doc.text(`GHS ${it.price.toFixed(2)}`, priceX + 10, y + 5);
+    doc.text(`GHS ${(it.quantity * it.price).toFixed(2)}`, subtotalX + 10, y + 5);
+    y += 20;
+  });
+
+  // --- Totals ---
+  y += 20;
+  doc.text(`Subtotal: GHS ${data.subtotal.toFixed(2)}`, 400, y, { align: "right" });
+  y += 20;
+  doc.fontSize(13).text(`Total: GHS ${data.total.toFixed(2)}`, 400, y, { align: "right" });
+
+  // --- Signature ---
+  y += 50;
+  doc.rect(50, y, 200, 0).stroke();
+  doc.text("Authorized Signature", 50, y + 5);
+  doc.text(data.adminSignature, 50, y + 25);
+
+  doc.fontSize(12).text("Thank you for doing business with LYSEONGH.", 50, y + 70);
+
+  doc.end();
+
+  await new Promise<void>((resolve, reject) => {
+    stream.on("finish", () => resolve());
+    stream.on("error", (e) => reject(e));
+  });
+
+  return pdfUrl;
+}
